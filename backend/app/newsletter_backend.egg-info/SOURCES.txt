@@ -1,0 +1,6 @@
+pyproject.toml
+app/newsletter_backend.egg-info/PKG-INFO
+app/newsletter_backend.egg-info/SOURCES.txt
+app/newsletter_backend.egg-info/dependency_links.txt
+app/newsletter_backend.egg-info/requires.txt
+app/newsletter_backend.egg-info/top_level.txt

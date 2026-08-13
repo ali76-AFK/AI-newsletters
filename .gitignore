@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+.env
+*.env
+.env.*
+.venv/
+venv/
+.idea/
+.vscode/
+.pgdata/
+output/
+infrastructure/env/db.env
+# secrets
+.env
+.env.*
+**/.env
+**/.env.*
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+
+# streamlit / local caches
+.streamlit/
+.pytest_cache/
+.mypy_cache/
+ruff_cache/
+
+# logs
+*.log
+
+# OS/editor
+.DS_Store
+.vscode/
