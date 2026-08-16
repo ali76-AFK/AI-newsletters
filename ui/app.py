@@ -48,6 +48,20 @@ def api_get(path: str, timeout: int = 5) -> dict | Any:
 def api_post(path: str, json: dict | None = None, timeout: int = 10) -> dict | Any:
     return api_request("POST", path, json_body=json, timeout=timeout)
 
+def get_automation_status() -> dict | None:
+    return api_get("/api/automation/status")
+
+
+def start_automation() -> dict | None:
+    return api_post("/api/automation/start")
+
+
+def stop_automation() -> dict | None:
+    return api_post("/api/automation/stop")
+
+def run_automation_tick() -> dict | None:
+    return api_post("/api/automation/tick", timeout=60)
+
 
 def get_health() -> dict | None:
     return api_get("/health")
@@ -337,6 +351,130 @@ def main() -> None:
     st.write("")
     st.write("---")
     st.subheader("Automation – create from source")
+
+    automation_state = get_automation_status() or {}
+    automation_status = automation_state.get("status", "unknown")
+    halt_reason = automation_state.get("halt_reason")
+
+    if automation_status == "running":
+        status_text = "● Running"
+        status_color = "metric-badge-ok"
+    elif automation_status == "halted_for_review":
+        status_text = "● Halted — human review required"
+        status_color = "metric-badge-error"
+    elif automation_status == "stopped":
+        status_text = "● Stopped"
+        status_color = "metric-badge-warn"
+    else:
+        status_text = "● Backend status unavailable"
+        status_color = "metric-badge-error"
+
+    st.markdown(
+        f'<div class="metric-pill {status_color}">{status_text}</div>',
+        unsafe_allow_html=True,
+    )
+
+    if automation_status == "halted_for_review" and halt_reason:
+        st.error(f"Automation is paused for review: {halt_reason}")
+
+    start_col, stop_col, details_col = st.columns([1, 1, 2])
+
+    with start_col:
+        if st.button(
+            "Start automation",
+            type="primary",
+            disabled=automation_status == "running",
+            key="start_automation_button",
+        ):
+            result = start_automation()
+            if isinstance(result, dict) and result.get("error"):
+                st.error(f"Could not start automation: {result['error']}")
+            else:
+                st.success("Automation enabled. A future scheduler/tick will now be allowed to run.")
+                st.rerun()
+
+    with stop_col:
+        if st.button(
+            "Stop automation",
+            disabled=automation_status != "running",
+            key="stop_automation_button",
+        ):
+            result = stop_automation()
+            if isinstance(result, dict) and result.get("error"):
+                st.error(f"Could not stop automation: {result['error']}")
+            else:
+                st.warning("Automation stopped. No future scheduled ticks should start new work.")
+                st.rerun()
+
+    with details_col:
+        last_run_at = automation_state.get("last_run_at") or "Never"
+        last_newsletter_id = automation_state.get("last_newsletter_id") or "None"
+        daily_count = automation_state.get("daily_send_count", 0)
+        daily_limit = automation_state.get("daily_send_limit", 3)
+
+        st.caption(
+            f"Last automated run: {last_run_at} · "
+            f"Last automated newsletter: {last_newsletter_id} · "
+            f"Today: {daily_count}/{daily_limit} automated sends"
+        )
+
+    if st.button(
+        "Run one automation tick",
+        disabled=automation_status != "running",
+        key="run_automation_tick_button",
+    ):
+        with st.spinner("Running one newsletter automation cycle..."):
+            result = run_automation_tick()
+
+        if isinstance(result, dict) and result.get("error"):
+            st.error(f"Automation tick failed: {result['error']}")
+
+        elif isinstance(result, dict) and result.get("status") == "skipped_duplicate":
+            st.info(
+                result.get(
+                    "message",
+                    "Duplicate newsletter skipped. No email was sent.",
+                )
+            )
+            with st.expander("Tick result"):
+                st.json(result)
+
+        elif isinstance(result, dict) and result.get("status") == "halted_for_review":
+            st.error(
+                result.get(
+                    "message",
+                    "Automation halted for human review.",
+                )
+            )
+            with st.expander("Tick result"):
+                st.json(result)
+            st.rerun()
+
+        elif isinstance(result, dict) and result.get("status") == "skipped":
+            st.warning(
+                result.get(
+                    "message",
+                    "Automation is currently stopped.",
+                )
+            )
+
+        else:
+            newsletter = result.get("newsletter", {}) if isinstance(result, dict) else {}
+
+            st.success(
+                "Tick completed: "
+                f"newsletter #{newsletter.get('newsletter_id')} was created."
+            )
+            st.write(
+                f"Risk: {newsletter.get('risk_level')} · "
+                f"Auto-approved: {newsletter.get('auto_approved')}"
+            )
+
+            with st.expander("Tick result"):
+                st.json(result)
+
+            st.rerun()
+
 
     auto_source = st.text_input("News source (e.g., Spiegel, Guardian)")
     auto_topic = st.selectbox("Automation topic", options=topics)

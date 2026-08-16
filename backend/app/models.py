@@ -146,3 +146,30 @@ class DraftEmail(Base):
             name="uq_newsletter_subscriber_draft",
         ),
     )
+
+
+class AutomationState(Base):
+    __tablename__ = "automation_state"
+
+    id = Column(Integer, primary_key=True, default=1)
+
+    enabled = Column(Boolean, nullable=False, default=False)
+    halted_for_review = Column(Boolean, nullable=False, default=False)
+    halt_reason = Column(Text, nullable=True)
+
+    last_run_at = Column(DateTime, nullable=True)
+    last_newsletter_id = Column(Integer, nullable=True)
+    daily_send_count = Column(Integer, nullable=False, default=0)
+    daily_send_date = Column(DateTime, nullable=True)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
