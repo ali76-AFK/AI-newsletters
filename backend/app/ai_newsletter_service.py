@@ -74,8 +74,15 @@ def classify_newsletter_text(title: str, body: str) -> dict:
     if _settings.llm_provider.lower() == "mock":
         return _mock_classify(title, body)
 
-    system = "Return JSON only."
-    prompt = f'Title: {title[:120]}\nBody: {body[:700]}\nJSON keys: risk_level, topic, reason'
+    system = (
+        "Return JSON only. "
+        "risk_level must be exactly one of: low, medium, high, critical."
+    )
+    prompt = (
+        f"Title: {title[:120]}\n"
+        f"Body: {body[:700]}\n"
+        "JSON keys: risk_level, topic, reason"
+    )
     raw = _llm_call(prompt, system=system)
 
     cleaned = _extract_json_block(raw)
@@ -91,10 +98,14 @@ def classify_newsletter_text(title: str, body: str) -> dict:
     topic = data.get("topic", "ai_news")
     reason = data.get("reason", "")
 
-    if risk not in ("low", "medium", "high"):
+    if risk not in ("low", "medium", "high", "critical"):
         risk = "low"
 
-    return {"risk_level": risk, "topic": topic, "reason": reason}
+    return {
+        "risk_level": risk,
+        "topic": topic,
+        "reason": reason,
+    }
 
 
 def summarize_newsletter_text(title: str, body: str) -> str:
