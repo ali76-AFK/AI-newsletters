@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from .routes_reviews import router as reviews_router
+
 from .config import load_settings
 from .logging_config import configure_logging
 from .db import db_healthcheck, init_db
@@ -57,3 +59,4 @@ app.include_router(workflows_router)
 app.include_router(drafts_router)
 app.include_router(ai_router)
 app.include_router(automation_router)
+app.include_router(reviews_router)

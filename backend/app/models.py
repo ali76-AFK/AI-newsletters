@@ -75,6 +75,9 @@ class Newsletter(Base):
     risk_level = Column(String(16), default="unknown", nullable=False)
     risk_reason = Column(Text, nullable=True)
     approved = Column(Boolean, default=False, nullable=False)
+    review_decision = Column(String(32), nullable=True)
+    review_note = Column(Text, nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
