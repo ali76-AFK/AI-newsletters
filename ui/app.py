@@ -135,6 +135,35 @@ def render_status_card(label: str, value: str, subvalue: str | None = None, valu
     )
 
 
+def get_pending_reviews() -> dict | None:
+    return api_get("/api/reviews/pending")
+
+
+def approve_and_send_review(
+    newsletter_id: int,
+    review_note: str,
+) -> dict | None:
+    return api_post(
+        f"/api/reviews/newsletters/{newsletter_id}/approve-and-send",
+        json={"review_note": review_note or None},
+        timeout=60,
+    )
+
+
+def reject_review(
+    newsletter_id: int,
+    review_note: str,
+) -> dict | None:
+    return api_post(
+        f"/api/reviews/newsletters/{newsletter_id}/reject",
+        json={"review_note": review_note or None},
+    )
+
+
+def resume_automation_after_review() -> dict | None:
+    return api_post("/api/reviews/resume-automation")
+
+
 
 def render_header() -> None:
     st.markdown(
@@ -350,6 +379,99 @@ def main() -> None:
 
     st.write("")
     st.write("---")
+
+    st.write("")
+    st.write("---")
+    st.subheader("Human review queue")
+
+    reviews_data = get_pending_reviews() or {}
+    pending_reviews = reviews_data.get("pending_reviews", [])
+    pending_count = reviews_data.get("count", 0)
+
+    if pending_count:
+        st.error(
+            f"{pending_count} newsletter(s) require human review before any send."
+        )
+
+        for item in pending_reviews:
+            newsletter_id = item["id"]
+
+            with st.expander(
+                f"Newsletter #{newsletter_id}: {item['title']} "
+                f"({item['risk_level'].upper()} risk)",
+                expanded=True,
+            ):
+                st.write(f"**Topic:** {item.get('topic')}")
+                st.write(f"**Risk reason:** {item.get('risk_reason')}")
+                st.write(f"**Created:** {item.get('created_at')}")
+
+                st.text_area(
+                    "Newsletter content",
+                    value=item.get("body", ""),
+                    height=180,
+                    disabled=True,
+                    key=f"review_body_{newsletter_id}",
+                )
+
+                review_note = st.text_area(
+                    "Review note",
+                    key=f"review_note_{newsletter_id}",
+                    placeholder="Explain why you approve or reject this newsletter.",
+                )
+
+                approve_col, reject_col = st.columns(2)
+
+                with approve_col:
+                    if st.button(
+                        "Approve & send",
+                        type="primary",
+                        key=f"approve_review_{newsletter_id}",
+                    ):
+                        with st.spinner(
+                            f"Approving and sending newsletter #{newsletter_id}..."
+                        ):
+                            result = approve_and_send_review(
+                                newsletter_id,
+                                review_note,
+                            )
+
+                        if isinstance(result, dict) and result.get("error"):
+                            st.error(f"Approval/send failed: {result['error']}")
+                        else:
+                            st.success(
+                                f"Newsletter #{newsletter_id} was approved and sent."
+                            )
+                            st.rerun()
+
+                with reject_col:
+                    if st.button(
+                        "Reject newsletter",
+                        key=f"reject_review_{newsletter_id}",
+                    ):
+                        result = reject_review(newsletter_id, review_note)
+
+                        if isinstance(result, dict) and result.get("error"):
+                            st.error(f"Rejection failed: {result['error']}")
+                        else:
+                            st.success(
+                                f"Newsletter #{newsletter_id} was rejected."
+                            )
+                            st.rerun()
+    else:
+        st.success("No newsletters are waiting for human review.")
+
+        if st.button(
+            "Resume automation after review",
+            key="resume_automation_after_review",
+        ):
+            result = resume_automation_after_review()
+
+            if isinstance(result, dict) and result.get("error"):
+                st.error(f"Could not resume automation: {result['error']}")
+            else:
+                st.success("Automation resumed.")
+                st.rerun()
+
     st.subheader("Automation – create from source")
 
     automation_state = get_automation_status() or {}
@@ -571,6 +693,9 @@ def main() -> None:
                     if drafts:
                         latest_draft_id = drafts[0]["id"]
 
+
+
+
             # Classification & approval
             if st.button("Classify & store risk"):
                 if selected_id is None:
@@ -589,54 +714,97 @@ def main() -> None:
                     else:
                         st.error(f"Error: {result}")
 
-            if st.button("Approve newsletter"):
+
+            selected_newsletter = next(
+                (
+                    newsletter
+                    for newsletter in newsletters
+                    if newsletter.get("id") == selected_id
+                ),
+                None,
+            )
+
+            selected_risk = (
+                selected_newsletter.get("risk_level")
+                if selected_newsletter
+                else None
+            )
+
+            if selected_risk in ("high", "critical"):
+                st.warning(
+                    "This newsletter requires the Human review queue. "
+                    "Use Approve & send or Reject newsletter there."
+                )
+
+            if st.button(
+                "Approve newsletter",
+                disabled=selected_risk in ("high", "critical"),
+            ):
                 if selected_id is None:
                     st.error("No newsletter selected.")
                 else:
                     result = approve_newsletter(selected_id)
-                    if result and "status" in result and result["status"] == "ok":
+
+                    if result and result.get("status") == "ok":
                         st.success("Newsletter approved.")
-                    elif result and "detail" in result:
+                    elif result and result.get("detail"):
                         st.error(f"Error: {result['detail']}")
                     else:
                         st.error(f"Error: {result}")
 
-            if st.button("Run deterministic workflow"):
+            if st.button(
+                "Run deterministic workflow",
+                disabled=selected_risk in ("high", "critical"),
+            ):
                 if selected_id is None:
                     st.error("No newsletter selected.")
                 else:
                     result = run_newsletter_workflow(selected_id)
-                    if result and "error" in result:
+
+                    if result and result.get("error"):
                         st.error(f"Error: {result['error']}")
                     elif isinstance(result, dict) and result.get("detail"):
                         st.error(f"Error: {result['detail']}")
                     else:
                         st.success("Workflow executed successfully.")
+
                         summary = result.get("result", {})
+
                         st.write(
                             f"Newsletter {summary.get('newsletter_id')} "
-                            f"workflow {summary.get('workflow_id')} created {summary.get('created_drafts')} draft(s) "
+                            f"workflow {summary.get('workflow_id')} created "
+                            f"{summary.get('created_drafts')} draft(s) "
                             f"for {summary.get('subscriber_count')} subscriber(s)."
                         )
+
                         send_summary = summary.get("send_summary")
+
                         if send_summary:
                             st.write(
-                                f"Simulated send: {send_summary.get('count',0)} email(s) "
-                                f"from {send_summary.get('sender')} "
+                                f"Simulated send: {send_summary.get('count', 0)} "
+                                f"email(s) from {send_summary.get('sender')} "
                                 f"with subject '{send_summary.get('subject')}'."
                             )
+
                             with st.expander("Simulated recipients"):
-                                st.write("\n".join(send_summary.get("recipients", [])))
+                                st.write(
+                                    "\n".join(
+                                        send_summary.get("recipients", [])
+                                    )
+                                )
 
                         with st.expander("Raw workflow result (JSON)"):
                             st.json(result)
 
                         drafts_resp = get_drafts_for_newsletter(selected_id)
+
                         if drafts_resp and isinstance(drafts_resp, dict):
                             ds = drafts_resp.get("drafts", [])
+
                             if ds:
                                 st.subheader("Draft emails")
                                 st.dataframe(ds, width="stretch")
+
 
             st.write("")
             st.subheader("AI suggestions")
