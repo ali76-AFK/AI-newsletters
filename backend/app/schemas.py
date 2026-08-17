@@ -43,7 +43,10 @@ class NewsletterCreate(BaseModel):
     title: str
     topic: str
     body: str
-
+    source: str | None = None
+    source_external_id: str | None = None
+    source_url: str | None = None
+    content_hash: str | None = None
 
 class NewsletterResponse(BaseModel):
     id: int

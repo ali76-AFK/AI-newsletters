@@ -1,33 +1,122 @@
 from __future__ import annotations
 
-from typing import Dict
+import hashlib
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Iterable
 
 
 class NewsIngestionError(Exception):
     pass
 
 
-def build_stub_newsletter_content(source: str, topic: str) -> Dict[str, str]:
+@dataclass(frozen=True)
+class NewsArticle:
+    source: str
+    external_id: str
+    url: str
+    published_at: str
+    topic: str
+    title: str
+    body: str
+
+    @property
+    def content_hash(self) -> str:
+        raw = (
+            f"{self.source}|{self.external_id}|{self.url}|"
+            f"{self.title}|{self.body}"
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+STUB_ARTICLES: tuple[NewsArticle, ...] = (
+    NewsArticle(
+        source="Spiegel",
+        external_id="spiegel-ai-001",
+        url="https://example.invalid/spiegel/ai-001",
+        published_at="2026-08-17T08:00:00Z",
+        topic="ai_news",
+        title="AI research collaboration highlights",
+        body=(
+            "A research consortium published a summary of its latest work on "
+            "evaluating language-model reliability. The report describes test "
+            "methodology, limitations, and plans for independent replication."
+        ),
+    ),
+    NewsArticle(
+        source="Spiegel",
+        external_id="spiegel-ai-002",
+        url="https://example.invalid/spiegel/ai-002",
+        published_at="2026-08-17T10:00:00Z",
+        topic="ai_news",
+        title="New dataset supports AI safety research",
+        body=(
+            "Researchers released documentation for a benchmark dataset used "
+            "to evaluate factual consistency in generated summaries. The "
+            "documentation includes known limitations and licensing details."
+        ),
+    ),
+    NewsArticle(
+        source="Spiegel",
+        external_id="spiegel-ai-003",
+        url="https://example.invalid/spiegel/ai-003",
+        published_at="2026-08-17T12:00:00Z",
+        topic="ai_news",
+        title="Public consultation on AI transparency opens",
+        body=(
+            "A public consultation invites comments on transparency practices "
+            "for automated systems. The announcement describes the submission "
+            "process and the consultation timetable."
+        ),
+    ),
+)
+
+
+def get_stub_articles(
+    source: str | None = None,
+    topic: str | None = None,
+) -> list[NewsArticle]:
+    """Return deterministic local articles for development and demo use."""
+    articles: Iterable[NewsArticle] = STUB_ARTICLES
+
+    if source:
+        articles = (
+            article
+            for article in articles
+            if article.source.lower() == source.lower()
+        )
+
+    if topic:
+        articles = (
+            article
+            for article in articles
+            if article.topic == topic
+        )
+
+    return list(articles)
+
+
+def build_stub_newsletter_content(source: str, topic: str) -> dict[str, str]:
     """
-    Stub for news ingestion. Returns a title and body based on source and topic.
+    Backward-compatible helper used by the existing manual source endpoint.
 
-    Later, replace this with real API calls to a news provider.
+    The automation tick will use get_stub_articles() directly.
     """
-    source_lower = source.lower()
-    topic_lower = topic.lower()
+    articles = get_stub_articles(source=source, topic=topic)
 
-    title = f"{source} – {topic.capitalize()} highlights"
+    if not articles:
+        raise NewsIngestionError(
+            f"No local stub articles for source={source!r}, topic={topic!r}."
+        )
 
-    body = f"""
-Dies ist eine automatisch generierte Newsletter-Zusammenfassung für das Thema '{topic_lower}' von der Quelle '{source_lower}'.
+    article = articles[0]
 
-Sie können diesen Text später durch Inhalte aus einer echten News-API ersetzen. Aktuell dient er nur als Platzhalter, um den
-Automatisierungs- und Workflow-Prozess zu demonstrieren.
-
-Stichpunkte:
-- Quelle: {source}
-- Thema: {topic}
-- Dieser Newsletter wurde automatisch erstellt, klassifiziert, geprüft und für den Versand vorbereitet.
-"""
-
-    return {"title": title.strip(), "body": body.strip()}
+    return {
+        "title": article.title,
+        "body": article.body,
+        "source": article.source,
+        "source_external_id": article.external_id,
+        "source_url": article.url,
+        "content_hash": article.content_hash,
+        "published_at": article.published_at,
+    }

@@ -19,6 +19,10 @@ def create_newsletter(
         topic=payload.topic,
         body=payload.body,
         status="created",
+        source=payload.source,
+        source_external_id=payload.source_external_id,
+        source_url=payload.source_url,
+        content_hash=payload.content_hash,
     )
     db.add(newsletter)
     db.flush()

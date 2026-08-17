@@ -1,26 +1,13 @@
 from __future__ import annotations
+
 from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from datetime import datetime, timedelta
-from sqlalchemy import desc
-
-from .db import get_session
-from .news_ingestion import build_stub_newsletter_content, NewsIngestionError
-from .crud_newsletters import (
-    create_newsletter,
-    create_workflow_execution_for_newsletter,
-)
-from .crud_subscribers import ALLOWED_TOPICS
-from .models import Newsletter
-from .schemas import NewsletterCreate
-from .ai_newsletter_service import classify_newsletter_text, AIServiceError
-from .routes_workflows import run_newsletter_workflow
-from pydantic import BaseModel
-
+from .ai_newsletter_service import AIServiceError, classify_newsletter_text
 from .crud_automation import (
-    AUTOMATION_COOLDOWN_SECONDS,
     MAX_AUTOMATED_SENDS_PER_DAY,
     can_run_automation_tick,
     get_or_create_automation_state,
@@ -29,6 +16,22 @@ from .crud_automation import (
     start_automation as start_automation_state,
     stop_automation as stop_automation_state,
 )
+from .crud_newsletters import (
+    create_newsletter,
+    create_workflow_execution_for_newsletter,
+)
+from .crud_subscribers import ALLOWED_TOPICS
+from .db import get_session
+from .models import Newsletter
+from .news_ingestion import (
+    NewsArticle,
+    NewsIngestionError,
+    build_stub_newsletter_content,
+    get_stub_articles,
+)
+from .routes_workflows import run_newsletter_workflow
+from .schemas import NewsletterCreate
+
 
 router = APIRouter(prefix="/api/automation", tags=["automation"])
 
@@ -36,6 +39,11 @@ router = APIRouter(prefix="/api/automation", tags=["automation"])
 def get_db():
     with get_session() as session:
         yield session
+
+
+class AutomationCreateRequest(BaseModel):
+    source: str
+    topic: str
 
 
 def _automation_state_response(state) -> dict:
@@ -58,78 +66,62 @@ def _automation_state_response(state) -> dict:
     }
 
 
-def _recent_duplicate_exists(
-    db: Session,
-    *,
-    title: str,
-    topic: str,
-    now: datetime,
-) -> bool:
+def _article_already_processed(db: Session, article: NewsArticle) -> bool:
     """
-    Treat an identical title/topic created within 24 hours as a duplicate.
+    Return True if the article identity or its content hash already exists.
 
-    Later, replace title matching with a real article URL/hash from the news API.
+    External IDs are the primary deduplication key. Content hash catches
+    identical text under a changed external ID.
     """
-    cutoff = now - timedelta(hours=30)
-
-    duplicate = (
+    existing = (
         db.query(Newsletter)
         .filter(
-            Newsletter.title == title,
-            Newsletter.topic == topic,
-            Newsletter.created_at >= cutoff,
+            Newsletter.source == article.source,
+            Newsletter.source_external_id == article.external_id,
         )
-        .order_by(desc(Newsletter.created_at))
         .first()
     )
 
-    return duplicate is not None
+    if existing is not None:
+        return True
+
+    if article.content_hash:
+        same_content = (
+            db.query(Newsletter)
+            .filter(Newsletter.content_hash == article.content_hash)
+            .first()
+        )
+        if same_content is not None:
+            return True
+
+    return False
 
 
-def _create_newsletter_from_source(
+def _find_next_unseen_article(
+    db: Session,
     source: str,
+    topic: str,
+) -> NewsArticle | None:
+    for article in get_stub_articles(source=source, topic=topic):
+        if not _article_already_processed(db, article):
+            return article
+
+    return None
+
+
+def _create_newsletter_from_content(
+    content: dict[str, str],
     topic: str,
     db: Session,
 ) -> dict:
-    """
-    Execute exactly one newsletter cycle.
-
-    The function is used by the existing manual endpoint and later by /tick.
-    It does not manage the automation-state flag itself.
-    """
-    if topic not in ALLOWED_TOPICS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid topic '{topic}'. Allowed topics: {ALLOWED_TOPICS}",
-        )
-
-    try:
-        content = build_stub_newsletter_content(source, topic)
-        now = datetime.utcnow()
-
-        if _recent_duplicate_exists(
-            db,
-            title=content["title"],
-            topic=topic,
-            now=now,
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Duplicate prevention: an identical newsletter title and topic "
-                    "already exist from the previous 24 hours."
-                ),
-            )
-    except NewsIngestionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-
     newsletter_payload = NewsletterCreate(
         title=content["title"],
         topic=topic,
         body=content["body"],
+        source=content.get("source"),
+        source_external_id=content.get("source_external_id"),
+        source_url=content.get("source_url"),
+        content_hash=content.get("content_hash"),
     )
 
     newsletter = create_newsletter(db, newsletter_payload)
@@ -169,17 +161,62 @@ def _create_newsletter_from_source(
         "newsletter_id": newsletter.id,
         "title": newsletter.title,
         "topic": newsletter.topic,
+        "source": newsletter.source,
+        "source_external_id": newsletter.source_external_id,
+        "source_url": newsletter.source_url,
+        "content_hash": newsletter.content_hash,
         "risk_level": newsletter.risk_level,
         "risk_reason": newsletter.risk_reason,
         "auto_approved": auto_approved,
         "workflow_result": workflow_result,
     }
 
-class AutomationCreateRequest(BaseModel):
-    source: str
-    topic: str
 
+def _create_newsletter_from_source(
+    source: str,
+    topic: str,
+    db: Session,
+) -> dict:
+    """
+    Create one newsletter using the first local article for a source/topic.
 
+    This preserves the existing manual source endpoint. The /tick endpoint
+    below chooses the next unseen article instead.
+    """
+    if topic not in ALLOWED_TOPICS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid topic '{topic}'. Allowed topics: {ALLOWED_TOPICS}",
+        )
+
+    try:
+        content = build_stub_newsletter_content(source, topic)
+    except NewsIngestionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    article = NewsArticle(
+        source=content["source"],
+        external_id=content["source_external_id"],
+        url=content["source_url"],
+        published_at=content["published_at"],
+        topic=topic,
+        title=content["title"],
+        body=content["body"],
+    )
+
+    if _article_already_processed(db, article):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Duplicate prevention: this article identity or content "
+                "was already processed."
+            ),
+        )
+
+    return _create_newsletter_from_content(content, topic, db)
 
 
 @router.post(
@@ -200,43 +237,29 @@ def create_newsletter_from_source(
 
 @router.get("/status")
 def get_automation_status(db: Session = Depends(get_db)) -> dict:
-    """Return persistent start/stop/review-halt state."""
     state = get_or_create_automation_state(db)
     return _automation_state_response(state)
 
 
 @router.post("/start")
 def start_automation(db: Session = Depends(get_db)) -> dict:
-    """
-    Enable scheduled automation.
-
-    This currently changes state only. A future scheduler or /tick endpoint
-    will read this flag before it runs an automation cycle.
-    """
     state = start_automation_state(db)
     return _automation_state_response(state)
 
 
 @router.post("/stop")
 def stop_automation(db: Session = Depends(get_db)) -> dict:
-    """
-    Disable scheduled automation.
-
-    This does not delete newsletters or drafts; it prevents future ticks
-    from starting new work.
-    """
     state = stop_automation_state(db)
     return _automation_state_response(state)
-
 
 
 @router.post("/tick")
 def run_automation_tick(db: Session = Depends(get_db)) -> dict:
     """
-    Run one safe automation cycle.
+    Run one safe cycle using the next unseen local article.
 
-    This endpoint does not schedule itself. A future cron task or scheduler
-    may call it periodically, but only while enabled remains true.
+    This endpoint does not schedule itself. A future scheduler may call it
+    periodically, but only while the persistent enabled flag is true.
     """
     state = get_or_create_automation_state(db)
     now = datetime.utcnow()
@@ -258,33 +281,41 @@ def run_automation_tick(db: Session = Depends(get_db)) -> dict:
     allowed, reason = can_run_automation_tick(state, now)
 
     if not allowed:
-        state = halt_automation_for_review(db, reason or "Automation safety limit reached.")
+        state = halt_automation_for_review(
+            db,
+            reason or "Automation safety limit reached.",
+        )
         return {
             "status": "halted_for_review",
             "message": reason,
             "automation": _automation_state_response(state),
         }
 
-
-
-    # Fixed demo configuration. Later this comes from saved user settings.
     source = "Spiegel"
     topic = "ai_news"
 
-    try:
-        result = _create_newsletter_from_source(
-            source=source,
-            topic=topic,
-            db=db,
-        )
-    except HTTPException as exc:
-        if exc.status_code == status.HTTP_409_CONFLICT:
-            return {
-                "status": "skipped_duplicate",
-                "message": exc.detail,
-                "automation": _automation_state_response(state),
-            }
-        raise
+    article = _find_next_unseen_article(db, source=source, topic=topic)
+
+    if article is None:
+        return {
+            "status": "skipped_no_new_articles",
+            "message": (
+                "No unseen local articles are available for this source and topic."
+            ),
+            "automation": _automation_state_response(state),
+        }
+
+    content = {
+        "title": article.title,
+        "body": article.body,
+        "source": article.source,
+        "source_external_id": article.external_id,
+        "source_url": article.url,
+        "content_hash": article.content_hash,
+        "published_at": article.published_at,
+    }
+
+    result = _create_newsletter_from_content(content, topic, db)
 
     state.last_run_at = now
     state.last_newsletter_id = result["newsletter_id"]
@@ -310,7 +341,7 @@ def run_automation_tick(db: Session = Depends(get_db)) -> dict:
 
     return {
         "status": "ok",
-        "message": "One automation tick completed.",
+        "message": "One automation tick completed using a new article.",
         "newsletter": result,
         "automation": _automation_state_response(state),
     }

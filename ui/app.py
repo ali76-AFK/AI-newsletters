@@ -561,6 +561,16 @@ def main() -> None:
             with st.expander("Tick result"):
                 st.json(result)
 
+        elif isinstance(result, dict) and result.get("status") == "skipped_no_new_articles":
+            st.info(
+                result.get(
+                    "message",
+                    "No new articles are available for this automation cycle.",
+                )
+            )
+            with st.expander("Tick result"):
+                st.json(result)
+
         elif isinstance(result, dict) and result.get("status") == "halted_for_review":
             st.error(
                 result.get(

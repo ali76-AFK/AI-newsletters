@@ -70,6 +70,10 @@ class Newsletter(Base):
     title = Column(String(255), nullable=False)
     topic = Column(String(100), nullable=False)
     body = Column(Text, nullable=False)
+    source = Column(String(120), nullable=True)
+    source_external_id = Column(String(255), nullable=True)
+    source_url = Column(String(1000), nullable=True)
+    content_hash = Column(String(64), nullable=True, index=True)
     status = Column(String(32), default="created", nullable=False)
     # Risk and approval
     risk_level = Column(String(16), default="unknown", nullable=False)
