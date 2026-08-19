@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import datetime as dt
 import os
 from typing import List, Optional, Any
 
@@ -40,6 +40,21 @@ def api_request(method: str, path: str, json_body: dict | None = None, timeout: 
 
     return data
 
+
+def get_schedules() -> dict | None:
+    return api_get("/api/schedules")
+
+
+def create_schedule(payload: dict) -> dict | None:
+    return api_post("/api/schedules", json=payload)
+
+
+def enable_schedule(schedule_id: int) -> dict | None:
+    return api_post(f"/api/schedules/{schedule_id}/enable")
+
+
+def disable_schedule(schedule_id: int) -> dict | None:
+    return api_post(f"/api/schedules/{schedule_id}/disable")
 
 def api_get(path: str, timeout: int = 5) -> dict | Any:
     return api_request("GET", path, timeout=timeout)
@@ -375,6 +390,168 @@ def main() -> None:
 
     st.write("")
     st.write("---")
+
+    st.write("")
+    st.write("---")
+    st.subheader("Newsletter delivery schedule")
+
+    weekday_labels = {
+        0: "Monday",
+        1: "Tuesday",
+        2: "Wednesday",
+        3: "Thursday",
+        4: "Friday",
+        5: "Saturday",
+        6: "Sunday",
+    }
+
+    schedule_col_form, schedule_col_list = st.columns([1, 2])
+
+    with schedule_col_form:
+        schedule_email = st.text_input(
+            "Delivery email",
+            value="ali.al-kelabi@stud.th-deg.de",
+            key="schedule_email",
+        )
+
+        schedule_name = st.text_input(
+            "Schedule name",
+            value="Ali",
+            key="schedule_name",
+        )
+
+        schedule_topics = st.multiselect(
+            "Schedule topics",
+            options=topics,
+            default=["ai_news"] if "ai_news" in topics else topics[:1],
+            key="schedule_topics",
+        )
+
+        schedule_sources = st.multiselect(
+            "News sources",
+            options=["Spiegel"],
+            default=["Spiegel"],
+            key="schedule_sources",
+        )
+
+        selected_day_labels = st.multiselect(
+            "Update days",
+            options=list(weekday_labels.values()),
+            default=["Monday", "Wednesday", "Friday"],
+            key="schedule_days",
+        )
+
+        selected_weekdays = [
+            day
+            for day, label in weekday_labels.items()
+            if label in selected_day_labels
+        ]
+
+        schedule_time = st.time_input(
+            "Delivery time",
+            value=dt.time(18, 0),
+            key="schedule_time",
+        )
+
+        schedule_timezone = st.selectbox(
+            "Timezone",
+            options=["Europe/Berlin", "UTC"],
+            index=0,
+            key="schedule_timezone",
+        )
+
+        schedule_enabled = st.checkbox(
+            "Enable this schedule",
+            value=False,
+            key="schedule_enabled",
+            help=(
+                "This stores the enabled state only. "
+                "Automatic scheduling will be added later."
+            ),
+        )
+
+        if st.button("Save delivery schedule", type="primary"):
+            payload = {
+                "email": schedule_email,
+                "name": schedule_name or None,
+                "topics": schedule_topics,
+                "sources": schedule_sources,
+                "weekdays": selected_weekdays,
+                "delivery_time": schedule_time.strftime("%H:%M"),
+                "timezone": schedule_timezone,
+                "enabled": schedule_enabled,
+            }
+
+            result = create_schedule(payload)
+
+            if isinstance(result, dict) and result.get("error"):
+                st.error(f"Could not save schedule: {result['error']}")
+            else:
+                st.success("Delivery schedule saved.")
+                st.rerun()
+
+    with schedule_col_list:
+        st.markdown("### Saved schedules")
+
+        schedules_data = get_schedules() or {}
+        schedules = schedules_data.get("schedules", [])
+
+        if not schedules:
+            st.info("No delivery schedules saved yet.")
+        else:
+            schedule_rows = []
+
+            for schedule in schedules:
+                days = ", ".join(
+                    weekday_labels.get(day, str(day))
+                    for day in schedule.get("weekdays", [])
+                )
+
+                schedule_rows.append(
+                    {
+                        "ID": schedule.get("id"),
+                        "Email": schedule.get("email"),
+                        "Topics": ", ".join(schedule.get("topics", [])),
+                        "Sources": ", ".join(schedule.get("sources", [])),
+                        "Days": days,
+                        "Time": schedule.get("delivery_time"),
+                        "Timezone": schedule.get("timezone"),
+                        "Enabled": schedule.get("enabled"),
+                        "Last run": schedule.get("last_run_at") or "Never",
+                    }
+                )
+
+            st.dataframe(schedule_rows, width="stretch")
+
+            for schedule in schedules:
+                schedule_id = schedule["id"]
+                is_enabled = schedule.get("enabled", False)
+
+                action_label = (
+                    f"Disable schedule #{schedule_id}"
+                    if is_enabled
+                    else f"Enable schedule #{schedule_id}"
+                )
+
+                if st.button(
+                    action_label,
+                    key=f"schedule_toggle_{schedule_id}",
+                ):
+                    result = (
+                        disable_schedule(schedule_id)
+                        if is_enabled
+                        else enable_schedule(schedule_id)
+                    )
+
+                    if isinstance(result, dict) and result.get("error"):
+                        st.error(
+                            f"Could not update schedule #{schedule_id}: "
+                            f"{result['error']}"
+                        )
+                    else:
+                        st.success(f"Schedule #{schedule_id} updated.")
+                        st.rerun()
+
     st.subheader("Newsletter drafts")
 
     st.write("")

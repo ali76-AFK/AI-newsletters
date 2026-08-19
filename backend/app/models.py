@@ -180,3 +180,60 @@ class AutomationState(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+
+
+class NewsletterSchedule(Base):
+    __tablename__ = "newsletter_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    email = Column(String(320), nullable=False, index=True)
+    name = Column(String(255), nullable=True)
+
+    topics_json = Column(Text, nullable=False, default="[]")
+    sources_json = Column(Text, nullable=False, default="[]")
+    weekdays_json = Column(Text, nullable=False, default="[]")
+
+    delivery_time = Column(String(5), nullable=False, default="18:00")
+    timezone = Column(String(64), nullable=False, default="Europe/Berlin")
+
+    enabled = Column(Boolean, nullable=False, default=False)
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    runs = relationship(
+        "ScheduleRun",
+        back_populates="schedule",
+        cascade="all, delete-orphan",
+    )
+
+
+class ScheduleRun(Base):
+    __tablename__ = "schedule_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    schedule_id = Column(
+        Integer,
+        ForeignKey("newsletter_schedules.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    status = Column(String(32), nullable=False)
+    newsletter_id = Column(Integer, nullable=True)
+    message = Column(Text, nullable=True)
+
+    schedule = relationship("NewsletterSchedule", back_populates="runs")
