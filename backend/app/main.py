@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .routes_schedules import router as schedules_router
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
@@ -60,3 +62,4 @@ app.include_router(drafts_router)
 app.include_router(ai_router)
 app.include_router(automation_router)
 app.include_router(reviews_router)
+app.include_router(schedules_router)

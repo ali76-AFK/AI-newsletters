@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
@@ -8,65 +10,150 @@ from backend.app.main import app
 client = TestClient(app)
 
 
-def test_workflow_zero_subscribers():
-    # Ensure no subscribers
-    resp = client.get("/api/subscribers")
-    assert resp.status_code == 200
-    data = resp.json()
-    for s in data.get("subscribers", []):
-        # mark all as inactive for this test
-        client.post(
-            "/api/subscribers/unsubscribe",
-            json={"email": s["email"]},
-        )
+def unique_email(prefix: str) -> str:
+    return f"{prefix}-{uuid4().hex}@example.com"
 
-    # Create a newsletter
+
+def unique_title(prefix: str) -> str:
+    return f"{prefix} {uuid4().hex}"
+
+
+def create_low_risk_approved_newsletter() -> int:
     payload = {
-        "title": "Zero Sub Test",
+        "title": unique_title("Workflow test newsletter"),
         "topic": "ai_news",
-        "body": "Body",
+        "body": (
+            "Researchers published documentation for an evaluation dataset. "
+            "The documentation describes methodology and known limitations."
+        ),
     }
-    resp = client.post("/api/newsletters", json=payload)
-    assert resp.status_code == 201
-    newsletter_id = resp.json()["id"]
 
-    # Running workflow should return 400 due to no active subscribers
-    resp = client.post(f"/api/workflows/newsletter/{newsletter_id}/run")
-    assert resp.status_code == 400
-    assert "No active subscribers" in resp.json()["detail"]
+    response = client.post("/api/newsletters", json=payload)
+    assert response.status_code == 201
+
+    newsletter_id = response.json()["id"]
+
+    response = client.post(
+        f"/api/newsletters/{newsletter_id}/classify-and-store"
+    )
+    assert response.status_code == 200
+
+    response = client.post(
+        f"/api/newsletters/{newsletter_id}/approve"
+    )
+    assert response.status_code == 200
+
+    return newsletter_id
+
+
+def test_workflow_zero_subscribers():
+    response = client.post(
+        "/api/newsletters",
+        json={
+            "title": unique_title("Zero subscriber test"),
+            "topic": "devops",
+            "body": "A short operations update.",
+        },
+    )
+    assert response.status_code == 201
+
+    newsletter_id = response.json()["id"]
+
+    response = client.post(
+        f"/api/workflows/newsletter/{newsletter_id}/run"
+    )
+
+    assert response.status_code == 400
+    assert "No active subscribers" in response.json()["detail"]
 
 
 def test_workflow_success_and_idempotent():
-    # Subscribe a user
-    client.post(
+    email = unique_email("workflow-test")
+
+    response = client.post(
         "/api/subscribers",
         json={
-            "email": "workflow-test@example.com",
+            "email": email,
             "name": "Workflow Test",
             "topics": ["ai_news"],
         },
     )
+    assert response.status_code == 201
 
-    # Create a newsletter
-    payload = {
-        "title": "Workflow Test Newsletter",
-        "topic": "ai_news",
-        "body": "Body",
-    }
-    resp = client.post("/api/newsletters", json=payload)
-    assert resp.status_code == 201
-    newsletter_id = resp.json()["id"]
+    newsletter_id = create_low_risk_approved_newsletter()
 
-    # First run
-    resp = client.post(f"/api/workflows/newsletter/{newsletter_id}/run")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["result"]["subscriber_count"] == 1
-    assert data["result"]["created_drafts"] == 1
+    response = client.post(
+        f"/api/workflows/newsletter/{newsletter_id}/run"
+    )
+    assert response.status_code == 200
 
-    # Second run should not create additional drafts for same subscriber
-    resp = client.post(f"/api/workflows/newsletter/{newsletter_id}/run")
-    assert resp.status_code == 200
-    data2 = resp.json()
-    assert data2["result"]["subscriber_count"] == 1
-    assert data2["result"]["created_drafts"] == 1
+    data = response.json()["result"]
+    assert data["subscriber_count"] >= 1
+    assert data["created_drafts"] >= 1
+    assert data["send_summary"]["count"] >= 1
+
+    drafts_response = client.get(
+        f"/api/drafts/newsletter/{newsletter_id}"
+    )
+    assert drafts_response.status_code == 200
+
+    drafts_before = [
+        item
+        for item in drafts_response.json()["drafts"]
+        if item["subscriber_email"] == email
+    ]
+    assert len(drafts_before) == 1
+
+    response = client.post(
+        f"/api/workflows/newsletter/{newsletter_id}/run"
+    )
+    assert response.status_code == 200
+
+    drafts_response = client.get(
+        f"/api/drafts/newsletter/{newsletter_id}"
+    )
+    assert drafts_response.status_code == 200
+
+    drafts_after = [
+        item
+        for item in drafts_response.json()["drafts"]
+        if item["subscriber_email"] == email
+    ]
+    assert len(drafts_after) == 1
+
+
+def test_subscriber_update_replaces_topics_without_duplicates():
+    email = unique_email("subscriber-update")
+
+    first = client.post(
+        "/api/subscribers",
+        json={
+            "email": email,
+            "name": "First Name",
+            "topics": ["ai_news", "robotics"],
+        },
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        "/api/subscribers",
+        json={
+            "email": email,
+            "name": "Updated Name",
+            "topics": ["ai_news"],
+        },
+    )
+    assert second.status_code == 201
+
+    response = client.get("/api/subscribers")
+    assert response.status_code == 200
+
+    subscriber = next(
+        item
+        for item in response.json()["subscribers"]
+        if item["email"] == email
+    )
+
+    assert subscriber["name"] == "Updated Name"
+    assert subscriber["is_active"] is True
+    assert subscriber["topics"] == ["ai_news"]
