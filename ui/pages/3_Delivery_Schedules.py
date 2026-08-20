@@ -8,8 +8,10 @@ from common import (
     create_schedule,
     disable_schedule,
     enable_schedule,
+    get_schedule_runs,
     get_schedules,
     get_topics,
+    run_schedule_now,
 )
 
 
@@ -19,15 +21,8 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("Newsletter delivery schedules")
-st.caption(
-    "Choose when newsletters should be prepared and delivered. "
-    "Enabled schedules are configuration only until the scheduler phase is added."
-)
 
-topics = get_topics()
-
-weekday_labels = {
+WEEKDAY_LABELS = {
     0: "Monday",
     1: "Tuesday",
     2: "Wednesday",
@@ -37,140 +32,312 @@ weekday_labels = {
     6: "Sunday",
 }
 
-form_col, list_col = st.columns([1, 2])
 
-with form_col:
-    st.subheader("Create schedule")
+def show_error(result: dict, action: str) -> None:
+    message = result.get("error", "Unknown error")
+    st.error(f"{action} failed: {message}")
 
-    schedule_email = st.text_input(
+
+def format_weekdays(days: list[int]) -> str:
+    return ", ".join(
+        WEEKDAY_LABELS.get(day, str(day))
+        for day in days
+    )
+
+
+def status_label(status: str) -> str:
+    labels = {
+        "sent": "✅ Sent",
+        "pending_review": "🟠 Pending review",
+        "skipped_no_new_articles": "ℹ️ No new articles",
+        "already_processed": "↩️ Already processed",
+        "failed": "❌ Failed",
+        "running": "⏳ Running",
+    }
+    return labels.get(status, status.replace("_", " ").title())
+
+
+st.title("🗓️ Newsletter delivery schedules")
+st.caption(
+    "Configure delivery preferences and inspect schedule runs."
+)
+
+st.info(
+    "Timed delivery requires the separate scheduler worker process. "
+    "Run it with `python -m app.scheduler_worker` from the backend "
+    "environment. The worker scans enabled schedules once per minute."
+)
+
+topics = get_topics()
+
+if not topics:
+    st.warning(
+        "No topics are available from the backend yet."
+    )
+
+st.subheader("Create schedule")
+
+with st.form("create_schedule_form", clear_on_submit=True):
+    email = st.text_input(
         "Delivery email",
-        value="ali.al-kelabi@stud.th-deg.de",
+        placeholder="you@example.com",
     )
 
-    schedule_name = st.text_input(
-        "Schedule name",
-        value="Ali",
+    name = st.text_input(
+        "Name (optional)",
+        placeholder="Newsletter recipient",
     )
 
-    schedule_topics = st.multiselect(
+    selected_topics = st.multiselect(
         "Topics",
         options=topics,
-        default=["ai_news"] if "ai_news" in topics else topics[:1],
+        default=topics[:1],
     )
 
-    schedule_sources = st.multiselect(
+    sources_text = st.text_input(
         "News sources",
-        options=["Spiegel"],
-        default=["Spiegel"],
+        placeholder="e.g., Spiegel",
     )
 
-    selected_day_labels = st.multiselect(
-        "Update days",
-        options=list(weekday_labels.values()),
-        default=["Monday", "Wednesday", "Friday"],
+    selected_days = st.multiselect(
+        "Delivery days",
+        options=list(WEEKDAY_LABELS.keys()),
+        default=[0, 2, 4],
+        format_func=lambda day: WEEKDAY_LABELS[day],
     )
 
-    selected_weekdays = [
-        day
-        for day, label in weekday_labels.items()
-        if label in selected_day_labels
-    ]
+    left_col, right_col = st.columns(2)
 
-    schedule_time = st.time_input(
-        "Delivery time",
-        value=dt.time(18, 0),
-    )
+    with left_col:
+        delivery_time = st.time_input(
+            "Delivery time",
+            value=dt.time(18, 0),
+        )
 
-    schedule_timezone = st.selectbox(
-        "Timezone",
-        options=["Europe/Berlin", "UTC"],
-    )
+    with right_col:
+        timezone = st.selectbox(
+            "Timezone",
+            options=["Europe/Berlin", "UTC"],
+            index=0,
+        )
 
-    schedule_enabled = st.checkbox(
+    enabled = st.checkbox(
         "Enable this schedule",
         value=False,
-        help="The future scheduler will honor this setting.",
     )
 
-    if st.button("Save delivery schedule", type="primary"):
+    submitted = st.form_submit_button(
+        "Save delivery schedule",
+        type="primary",
+    )
+
+if submitted:
+    sources = [
+        source.strip()
+        for source in sources_text.split(",")
+        if source.strip()
+    ]
+
+    if not email.strip():
+        st.error("Delivery email is required.")
+    elif not selected_topics:
+        st.error("Select at least one topic.")
+    elif not sources:
+        st.error("Enter at least one source.")
+    elif not selected_days:
+        st.error("Select at least one delivery day.")
+    else:
         payload = {
-            "email": schedule_email,
-            "name": schedule_name or None,
-            "topics": schedule_topics,
-            "sources": schedule_sources,
-            "weekdays": selected_weekdays,
-            "delivery_time": schedule_time.strftime("%H:%M"),
-            "timezone": schedule_timezone,
-            "enabled": schedule_enabled,
+            "email": email.strip(),
+            "name": name.strip() or None,
+            "topics": selected_topics,
+            "sources": sources,
+            "weekdays": selected_days,
+            "delivery_time": delivery_time.strftime("%H:%M"),
+            "timezone": timezone,
+            "enabled": enabled,
         }
 
         result = create_schedule(payload)
 
         if result.get("error"):
-            st.error(f"Could not save schedule: {result['error']}")
+            show_error(result, "Saving schedule")
         else:
             st.success("Delivery schedule saved.")
             st.rerun()
 
-with list_col:
-    st.subheader("Saved schedules")
+st.divider()
+st.subheader("Saved schedules")
 
-    schedules_data = get_schedules()
-    schedules = schedules_data.get("schedules", [])
+schedules_data = get_schedules()
 
-    if schedules_data.get("error"):
-        st.error(f"Could not load schedules: {schedules_data['error']}")
-    elif not schedules:
-        st.info("No schedules have been saved.")
-    else:
-        rows = []
+if schedules_data.get("error"):
+    show_error(schedules_data, "Loading schedules")
+    st.stop()
 
-        for schedule in schedules:
-            days = ", ".join(
-                weekday_labels.get(day, str(day))
-                for day in schedule.get("weekdays", [])
+schedules = schedules_data.get("schedules", [])
+
+if not schedules:
+    st.info("No delivery schedules have been saved yet.")
+    st.stop()
+
+enabled_count = sum(
+    1 for schedule in schedules if schedule.get("enabled")
+)
+
+metric_one, metric_two = st.columns(2)
+
+with metric_one:
+    st.metric("Saved schedules", len(schedules))
+
+with metric_two:
+    st.metric("Enabled schedules", enabled_count)
+
+for schedule in schedules:
+    schedule_id = schedule["id"]
+    enabled = schedule.get("enabled", False)
+    state = "Enabled" if enabled else "Disabled"
+
+    with st.expander(
+        f"Schedule #{schedule_id} · "
+        f"{schedule.get('email')} · {state}",
+        expanded=False,
+    ):
+        info_col, actions_col = st.columns([3, 1])
+
+        with info_col:
+            st.write(
+                f"**Topics:** "
+                f"{', '.join(schedule.get('topics', []))}"
+            )
+            st.write(
+                f"**Sources:** "
+                f"{', '.join(schedule.get('sources', []))}"
+            )
+            st.write(
+                f"**Days:** "
+                f"{format_weekdays(schedule.get('weekdays', []))}"
+            )
+            st.write(
+                f"**Time:** {schedule.get('delivery_time')} "
+                f"({schedule.get('timezone')})"
+            )
+            st.write(
+                f"**Last schedule run:** "
+                f"{schedule.get('last_run_at') or 'Never'}"
             )
 
-            rows.append(
-                {
-                    "ID": schedule.get("id"),
-                    "Email": schedule.get("email"),
-                    "Topics": ", ".join(schedule.get("topics", [])),
-                    "Sources": ", ".join(schedule.get("sources", [])),
-                    "Days": days,
-                    "Time": schedule.get("delivery_time"),
-                    "Timezone": schedule.get("timezone"),
-                    "Enabled": schedule.get("enabled"),
-                    "Last run": schedule.get("last_run_at") or "Never",
-                }
+        with actions_col:
+            if enabled:
+                if st.button(
+                    "Disable",
+                    key=f"disable_{schedule_id}",
+                ):
+                    result = disable_schedule(schedule_id)
+
+                    if result.get("error"):
+                        show_error(result, "Disabling schedule")
+                    else:
+                        st.warning(
+                            f"Schedule #{schedule_id} disabled."
+                        )
+                        st.rerun()
+            else:
+                if st.button(
+                    "Enable",
+                    type="primary",
+                    key=f"enable_{schedule_id}",
+                ):
+                    result = enable_schedule(schedule_id)
+
+                    if result.get("error"):
+                        show_error(result, "Enabling schedule")
+                    else:
+                        st.success(
+                            f"Schedule #{schedule_id} enabled."
+                        )
+                        st.rerun()
+
+        st.divider()
+        st.markdown("### Controlled execution")
+
+        if not enabled:
+            st.caption(
+                "Enable this schedule before using Run now."
             )
-
-        st.dataframe(rows, width="stretch")
-
-        st.write("")
-
-        for schedule in schedules:
-            schedule_id = schedule["id"]
-            is_enabled = schedule.get("enabled", False)
-
-            label = (
-                f"Disable schedule #{schedule_id}"
-                if is_enabled
-                else f"Enable schedule #{schedule_id}"
-            )
-
-            if st.button(label, key=f"schedule_toggle_{schedule_id}"):
-                result = (
-                    disable_schedule(schedule_id)
-                    if is_enabled
-                    else enable_schedule(schedule_id)
-                )
+        else:
+            if st.button(
+                "Run now",
+                type="primary",
+                key=f"run_now_{schedule_id}",
+            ):
+                with st.spinner(
+                    f"Running schedule #{schedule_id}..."
+                ):
+                    result = run_schedule_now(schedule_id)
 
                 if result.get("error"):
-                    st.error(
-                        f"Could not update schedule #{schedule_id}: "
-                        f"{result['error']}"
-                    )
+                    show_error(result, "Run now")
                 else:
-                    st.success(f"Schedule #{schedule_id} updated.")
+                    run = result.get("run", {})
+                    run_status = result.get(
+                        "status",
+                        run.get("status", "unknown"),
+                    )
+
+                    st.success(
+                        f"Schedule run completed: "
+                        f"{status_label(run_status)}"
+                    )
+
+                    message = run.get("message")
+                    if message:
+                        st.write(message)
+
+                    newsletter = result.get("newsletter")
+                    if newsletter:
+                        st.write(
+                            f"**Newsletter:** "
+                            f"#{newsletter.get('id')} · "
+                            f"{newsletter.get('title')}"
+                        )
+                        st.write(
+                            f"**Risk:** "
+                            f"{newsletter.get('risk_level')}"
+                        )
+
                     st.rerun()
+
+        st.markdown("### Recent run history")
+
+        runs_data = get_schedule_runs(schedule_id)
+
+        if runs_data.get("error"):
+            show_error(runs_data, "Loading run history")
+            continue
+
+        runs = runs_data.get("runs", [])
+
+        if not runs:
+            st.info("No runs recorded for this schedule.")
+            continue
+
+        history_rows = [
+            {
+                "Status": status_label(
+                    run.get("status", "unknown")
+                ),
+                "Newsletter ID": run.get("newsletter_id"),
+                "Message": run.get("message"),
+                "Started": run.get("started_at"),
+                "Completed": run.get("completed_at"),
+                "Run key": run.get("run_key"),
+            }
+            for run in runs[:10]
+        ]
+
+        st.dataframe(
+            history_rows,
+            width="stretch",
+            hide_index=True,
+        )

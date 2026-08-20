@@ -115,3 +115,13 @@ streamlit run launcher.py
 cd backend && source .venv/bin/activate
 python -m app.scheduler_worker
 ```
+
+## 2026-08-20 — Schedule-run visibility in Streamlit
+
+### Completed
+
+- Added schedule run-history visibility to the Delivery Schedules page.
+- Added controlled Run now actions for enabled schedules.
+- Displayed sent, pending-review, skipped, failed, and already-processed states.
+- Added a clear worker-process reminder for timed delivery.
+- Kept UI actions routed through existing bounded backend endpoints.
