@@ -86,3 +86,32 @@ Implement bounded scheduled delivery:
 - No continuously running scheduler process yet.
 - No scheduler health/status persistence yet.
 - No real RSS/API ingestion yet.
+
+## 2026-08-20 — Separate scheduler worker
+
+### Completed
+
+- Added a standalone scheduler worker process.
+- The worker opens a fresh database session for every scan.
+- The worker calls the tested due-schedule scan service once per minute.
+- The worker logs scan outcomes and handles Ctrl+C / SIGTERM shutdown.
+- The worker remains separate from FastAPI/Uvicorn and Streamlit.
+
+### Operational run commands
+
+```bash
+# Terminal 1
+cd infrastructure && docker compose up -d
+
+# Terminal 2
+cd backend && source .venv/bin/activate
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+
+# Terminal 3
+cd ui && source .venv/bin/activate
+streamlit run launcher.py
+
+# Terminal 4
+cd backend && source .venv/bin/activate
+python -m app.scheduler_worker
+```
