@@ -125,3 +125,14 @@ python -m app.scheduler_worker
 - Displayed sent, pending-review, skipped, failed, and already-processed states.
 - Added a clear worker-process reminder for timed delivery.
 - Kept UI actions routed through existing bounded backend endpoints.
+
+## 2026-08-20 — Dashboard schedule operations
+
+### Completed
+
+- Added read-only schedule operations indicators to the Dashboard.
+- Added enabled-schedule, pending-review, latest-run, and
+  failed/skipped-run indicators.
+- Added the latest schedule-run message and worker start reminder.
+- Kept all state-changing actions on Delivery Schedules, Automation,
+  and Human Review pages.
