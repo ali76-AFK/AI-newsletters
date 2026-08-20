@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from html import unescape
 from typing import Iterable
+from urllib.parse import urlparse
+
+import feedparser
+import requests
+
+from .config import load_settings
 
 
 class NewsIngestionError(Exception):
@@ -71,12 +78,24 @@ STUB_ARTICLES: tuple[NewsArticle, ...] = (
     ),
 )
 
+RSS_SOURCE_ALLOWLIST = {
+    "Spiegel": {
+        "ai_news": (
+            "https://www.spiegel.de/wissenschaft/technik/index.rss"
+        ),
+    },
+}
+
+MAX_RSS_ENTRIES = 15
+MAX_RSS_RESPONSE_BYTES = 1_000_000
+RSS_TIMEOUT_SECONDS = 10
+RSS_USER_AGENT = "newsletter-orchestrator/0.5 (+local development)"
+
 
 def get_stub_articles(
     source: str | None = None,
     topic: str | None = None,
 ) -> list[NewsArticle]:
-    """Return deterministic local articles for development and demo use."""
     articles: Iterable[NewsArticle] = STUB_ARTICLES
 
     if source:
@@ -96,17 +115,165 @@ def get_stub_articles(
     return list(articles)
 
 
-def build_stub_newsletter_content(source: str, topic: str) -> dict[str, str]:
-    """
-    Backward-compatible helper used by the existing manual source endpoint.
+def _safe_text(value: object) -> str:
+    if value is None:
+        return ""
 
-    The automation tick will use get_stub_articles() directly.
-    """
+    text = str(value)
+    return " ".join(unescape(text).split())
+
+
+def _validated_rss_url(source: str, topic: str) -> str:
+    source_mapping = RSS_SOURCE_ALLOWLIST.get(source)
+
+    if source_mapping is None:
+        raise NewsIngestionError(
+            f"RSS source is not allowlisted: {source!r}"
+        )
+
+    feed_url = source_mapping.get(topic)
+
+    if feed_url is None:
+        raise NewsIngestionError(
+            f"RSS topic is not allowlisted for {source!r}: {topic!r}"
+        )
+
+    parsed = urlparse(feed_url)
+
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise NewsIngestionError(
+            "RSS allowlist contains an invalid HTTPS URL."
+        )
+
+    return feed_url
+
+
+def _entry_timestamp(entry: object) -> str:
+    published = getattr(entry, "published", None)
+    updated = getattr(entry, "updated", None)
+
+    timestamp = _safe_text(published or updated)
+
+    if timestamp:
+        return timestamp
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def fetch_rss_articles(
+    source: str,
+    topic: str,
+) -> list[NewsArticle]:
+    feed_url = _validated_rss_url(source, topic)
+
+    try:
+        response = requests.get(
+            feed_url,
+            headers={"User-Agent": RSS_USER_AGENT},
+            timeout=RSS_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise NewsIngestionError(
+            f"RSS fetch failed for {source!r}: {exc}"
+        ) from exc
+
+    content = response.content
+
+    if len(content) > MAX_RSS_RESPONSE_BYTES:
+        raise NewsIngestionError(
+            f"RSS response exceeded {MAX_RSS_RESPONSE_BYTES} bytes."
+        )
+
+    parsed_feed = feedparser.parse(content)
+
+    if parsed_feed.bozo and not parsed_feed.entries:
+        raise NewsIngestionError(
+            f"RSS parsing failed for {source!r}."
+        )
+
+    articles: list[NewsArticle] = []
+
+    for entry in parsed_feed.entries[:MAX_RSS_ENTRIES]:
+        url = _safe_text(
+            getattr(entry, "link", None)
+        )
+
+        if not url:
+            continue
+
+        parsed_url = urlparse(url)
+
+        if parsed_url.scheme != "https" or not parsed_url.netloc:
+            continue
+
+        title = _safe_text(
+            getattr(entry, "title", None)
+        )
+
+        summary = _safe_text(
+            getattr(entry, "summary", None)
+            or getattr(entry, "description", None)
+        )
+
+        if not title or not summary:
+            continue
+
+        external_id = _safe_text(
+            getattr(entry, "id", None)
+            or getattr(entry, "guid", None)
+            or url
+        )
+
+        articles.append(
+            NewsArticle(
+                source=source,
+                external_id=external_id,
+                url=url,
+                published_at=_entry_timestamp(entry),
+                topic=topic,
+                title=title,
+                body=summary,
+            )
+        )
+
+    return articles
+
+
+def get_articles(
+    source: str | None = None,
+    topic: str | None = None,
+) -> list[NewsArticle]:
+    if not source or not topic:
+        raise NewsIngestionError(
+            "Source and topic are required for article retrieval."
+        )
+
+    settings = load_settings()
+    mode = settings.news_source_mode.strip().lower()
+
+    if mode == "stub":
+        return get_stub_articles(source=source, topic=topic)
+
+    if mode == "rss":
+        return fetch_rss_articles(source=source, topic=topic)
+
+    raise NewsIngestionError(
+        f"Unsupported NEWS_SOURCE_MODE: {mode!r}. "
+        "Use 'stub' or 'rss'."
+    )
+
+
+def build_stub_newsletter_content(
+    source: str,
+    topic: str,
+) -> dict[str, str]:
     articles = get_stub_articles(source=source, topic=topic)
 
     if not articles:
         raise NewsIngestionError(
-            f"No local stub articles for source={source!r}, topic={topic!r}."
+            f"No local stub articles for "
+            f"source={source!r}, topic={topic!r}."
         )
 
     article = articles[0]

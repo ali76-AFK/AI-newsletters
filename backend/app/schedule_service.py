@@ -12,7 +12,7 @@ from .crud_newsletters import (
     create_workflow_execution_for_newsletter,
 )
 from .models import Newsletter, NewsletterSchedule, ScheduleRun
-from .news_ingestion import NewsArticle, get_stub_articles
+from .news_ingestion import NewsArticle, get_articles
 from .routes_workflows import run_newsletter_workflow
 from .scheduler_logic import (
     is_schedule_due,
@@ -87,7 +87,7 @@ def _first_unseen_article(
 ) -> NewsArticle | None:
     for source in sources:
         for topic in topics:
-            for article in get_stub_articles(
+            for article in get_articles(
                 source=source,
                 topic=topic,
             ):

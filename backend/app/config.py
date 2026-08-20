@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+
 from pydantic import BaseModel, Field, ValidationError
 
 
@@ -18,9 +19,12 @@ class Settings(BaseModel):
     llm_provider: str = Field(default="mock")
     ollama_model: str = Field(default="llama3.1:8b")
     groq_api_key: str | None = Field(default=None)
-    groq_model: str = Field(default="replace_with_supported_groq_model")
+    groq_model: str = Field(
+        default="replace_with_supported_groq_model"
+    )
 
-    email_mode: str = Field(default="mock")  # mock | real
+    email_mode: str = Field(default="mock")
+    news_source_mode: str = Field(default="stub")
 
     @property
     def sqlalchemy_dsn(self) -> str:
@@ -44,8 +48,17 @@ def load_settings() -> Settings:
             llm_provider=os.getenv("LLM_PROVIDER", "mock"),
             ollama_model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"),
             groq_api_key=os.getenv("GROQ_API_KEY"),
-            groq_model=os.getenv("GROQ_MODEL", "replace_with_supported_groq_model"),
+            groq_model=os.getenv(
+                "GROQ_MODEL",
+                "replace_with_supported_groq_model",
+            ),
             email_mode=os.getenv("EMAIL_MODE", "mock"),
+            news_source_mode=os.getenv(
+                "NEWS_SOURCE_MODE",
+                "stub",
+            ),
         )
     except ValidationError as exc:
-        raise RuntimeError(f"Invalid configuration: {exc}") from exc
+        raise RuntimeError(
+            f"Invalid configuration: {exc}"
+        ) from exc

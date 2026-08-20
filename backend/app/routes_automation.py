@@ -27,7 +27,7 @@ from .news_ingestion import (
     NewsArticle,
     NewsIngestionError,
     build_stub_newsletter_content,
-    get_stub_articles,
+    get_articles,
 )
 from .routes_workflows import run_newsletter_workflow
 from .schemas import NewsletterCreate
@@ -102,7 +102,7 @@ def _find_next_unseen_article(
     source: str,
     topic: str,
 ) -> NewsArticle | None:
-    for article in get_stub_articles(source=source, topic=topic):
+    for article in get_articles(source=source, topic=topic):
         if not _article_already_processed(db, article):
             return article
 

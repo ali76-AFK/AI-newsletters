@@ -15,7 +15,9 @@ dependencies = [
   "psycopg[binary]>=3.2.0,<4.0.0",
   "python-dotenv>=1.0.1,<2.0.0",
   "structlog>=24.0.0,<25.0.0",
-  "langgraph>=0.2.0,<0.3.0"
+  "langgraph>=0.2.0,<0.3.0",
+  "feedparser>=6.0.11,<7.0.0",
+  "requests>=2.32.0,<3.0.0"
 ]
 
 [project.optional-dependencies]

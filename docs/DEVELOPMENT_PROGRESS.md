@@ -136,3 +136,28 @@ python -m app.scheduler_worker
 - Added the latest schedule-run message and worker start reminder.
 - Kept all state-changing actions on Delivery Schedules, Automation,
   and Human Review pages.
+
+## 2026-08-20 — Allowlisted RSS ingestion adapter
+
+### Completed
+
+- Added `NEWS_SOURCE_MODE` with deterministic `stub` mode as the default.
+- Added an allowlisted RSS adapter for `Spiegel` and the `ai_news` topic.
+- Added HTTPS validation, a response-size limit, a timeout, and bounded RSS entry processing.
+- Normalized RSS entries into the existing `NewsArticle` model.
+- Updated schedule execution and automation ticks to select stub or RSS articles through one source selector.
+- Retained deterministic local stubs for tests and demos.
+- Added mocked RSS tests with no network dependency.
+
+### Activation
+
+Set `NEWS_SOURCE_MODE=rss` in the backend environment to use the allowlisted live feed.
+Keep `NEWS_SOURCE_MODE=stub` for deterministic local testing.
+
+### Current RSS topic behavior
+
+The initial `Spiegel` RSS mapping uses the SPIEGEL science/technology feed for
+the existing `ai_news` routing category. Feed entries can include broader
+technology and science coverage; strict article-level topic relevance filtering
+is a future enhancement. The system still processes only one bounded unseen
+article per schedule run.
