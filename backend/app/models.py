@@ -236,4 +236,6 @@ class ScheduleRun(Base):
     newsletter_id = Column(Integer, nullable=True)
     message = Column(Text, nullable=True)
 
+    run_key = Column(String(128), nullable=False, unique=True, index=True)
+
     schedule = relationship("NewsletterSchedule", back_populates="runs")

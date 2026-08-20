@@ -48,3 +48,21 @@ Implement bounded scheduled delivery:
 - Updated successful LangGraph workflow completion to mark newsletters `sent`.
 - Added automated regression tests for critical approval blocking, direct
   workflow blocking, low-risk approved delivery, and human-review routing.
+
+## 2026-08-20 — Bounded schedule run-now API
+
+### Completed
+
+- Added persisted `ScheduleRun.run_key` values for run identification.
+- Added a bounded schedule execution service using saved schedule sources and topics.
+- Added `POST /api/schedules/{schedule_id}/run-now` for controlled execution.
+- Added `GET /api/schedules/{schedule_id}/runs` for run history.
+- Reused existing duplicate prevention, classification, human-review, and send policy.
+- Kept execution finite: one saved schedule and at most one unseen local article.
+- Added tests for disabled schedules and persisted schedule-run results.
+
+### Not included yet
+
+- No continuous scheduler worker.
+- No timezone-based due-schedule evaluation.
+- No real RSS/API news ingestion.
