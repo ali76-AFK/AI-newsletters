@@ -125,11 +125,15 @@ def build_workflow_graph(db: Session) -> StateGraph[WorkflowState]:
         if newsletter is None:
             raise WorkflowGraphError(f"Newsletter {state.newsletter_id} not found")
 
-        # Guardrail: only send if approved and not high risk
+        # Guardrail: only approved low/medium newsletters may send here.
+        # High and critical newsletters must use the Human Review route.
         if not newsletter.approved:
             raise WorkflowGraphError("Newsletter not approved; cannot send.")
-        if newsletter.risk_level == "high":
-            raise WorkflowGraphError("High-risk newsletter; sending blocked.")
+        if newsletter.risk_level in {"high", "critical"}:
+            raise WorkflowGraphError(
+                "High- and critical-risk newsletters require human review; "
+                "sending blocked."
+            )
 
         sender = "newsletter-orchestrator@example.com"
         recipients = [s.email for s in state.subscribers]
@@ -159,7 +163,7 @@ def build_workflow_graph(db: Session) -> StateGraph[WorkflowState]:
 
         wf.state = "completed"
         wf.completed_at = datetime.utcnow()
-        newsletter.status = "drafting"  # could be 'sent' later if desired
+        newsletter.status = "sent"
         db.flush()
 
         return state

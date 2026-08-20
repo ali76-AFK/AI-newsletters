@@ -5,7 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from .db import get_session
+from .ai_newsletter_service import AIServiceError, classify_newsletter_text
 from .crud_newsletters import (
     create_basic_draft_for_newsletter,
     create_newsletter,
@@ -13,15 +13,18 @@ from .crud_newsletters import (
     list_newsletters,
 )
 from .crud_subscribers import ALLOWED_TOPICS
+from .db import get_session
+from .models import Newsletter
 from .schemas import (
     NewsletterCreate,
     NewsletterListResponse,
     NewsletterResponse,
 )
-from .models import Newsletter
-from .ai_newsletter_service import classify_newsletter_text, AIServiceError
+
 
 router = APIRouter(prefix="/api/newsletters", tags=["newsletters"])
+
+REVIEW_REQUIRED_RISK_LEVELS = {"high", "critical"}
 
 
 def get_db():
@@ -71,17 +74,19 @@ def list_newsletters_endpoint(
     db: Session = Depends(get_db),
 ) -> NewsletterListResponse:
     newsletters = list_newsletters(db)
+
     items: List[NewsletterResponse] = [
         NewsletterResponse(
-            id=n.id,
-            title=n.title,
-            topic=n.topic,
-            status=n.status,
-            risk_level=n.risk_level,
-            approved=n.approved,
+            id=item.id,
+            title=item.title,
+            topic=item.topic,
+            status=item.status,
+            risk_level=item.risk_level,
+            approved=item.approved,
         )
-        for n in newsletters
+        for item in newsletters
     ]
+
     return NewsletterListResponse(newsletters=items)
 
 
@@ -94,6 +99,7 @@ def classify_and_store_newsletter(
     db: Session = Depends(get_db),
 ) -> dict:
     newsletter = db.get(Newsletter, newsletter_id)
+
     if newsletter is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -101,7 +107,10 @@ def classify_and_store_newsletter(
         )
 
     try:
-        result = classify_newsletter_text(newsletter.title, newsletter.body)
+        result = classify_newsletter_text(
+            newsletter.title,
+            newsletter.body,
+        )
     except AIServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -110,6 +119,11 @@ def classify_and_store_newsletter(
 
     newsletter.risk_level = result["risk_level"]
     newsletter.risk_reason = result["reason"]
+    newsletter.status = (
+        "pending_review"
+        if newsletter.risk_level in REVIEW_REQUIRED_RISK_LEVELS
+        else "classified"
+    )
     db.flush()
 
     return {"classification": result}
@@ -124,20 +138,29 @@ def approve_newsletter(
     db: Session = Depends(get_db),
 ) -> dict:
     newsletter = db.get(Newsletter, newsletter_id)
+
     if newsletter is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Newsletter not found",
         )
 
-    # Policy: only low or medium risk can be auto-approved.
-    if newsletter.risk_level == "high":
+    if newsletter.risk_level in REVIEW_REQUIRED_RISK_LEVELS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="High-risk newsletters require manual review and cannot be auto-approved.",
+            detail=(
+                "High- and critical-risk newsletters require human review "
+                "and cannot be approved through this endpoint."
+            ),
         )
 
     newsletter.approved = True
+    newsletter.status = "approved"
     db.flush()
 
-    return {"status": "ok", "approved": True}
+    return {
+        "status": "ok",
+        "approved": True,
+        "newsletter_id": newsletter.id,
+        "risk_level": newsletter.risk_level,
+    }

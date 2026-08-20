@@ -35,3 +35,16 @@ Implement bounded scheduled delivery:
 4. Add schedule execution service.
 5. Add separate scheduler worker.
 6. Add tests and dashboard visibility.
+
+## 2026-08-19 — Safety policy enforcement
+
+### Completed
+
+- Blocked direct approval for both high-risk and critical-risk newsletters.
+- Blocked direct LangGraph sends for both high-risk and critical-risk newsletters.
+- Reserved high/critical approval and sending for the Human Review route.
+- Added explicit `classified`, `pending_review`, `approved`, and `sent`
+  newsletter workflow states where applicable.
+- Updated successful LangGraph workflow completion to mark newsletters `sent`.
+- Added automated regression tests for critical approval blocking, direct
+  workflow blocking, low-risk approved delivery, and human-review routing.
