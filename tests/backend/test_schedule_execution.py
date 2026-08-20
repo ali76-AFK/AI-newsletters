@@ -80,3 +80,85 @@ def test_enabled_schedule_run_now_records_run():
     )
     assert runs.status_code == 200
     assert len(runs.json()["runs"]) == 1
+
+
+def test_due_scan_creates_one_run_and_second_scan_is_idempotent():
+    from datetime import datetime, timezone
+
+    from backend.app.db import get_session
+    from backend.app.schedule_service import scan_due_schedules_once
+    from backend.app.models import NewsletterSchedule
+
+    schedule_id = create_schedule(enabled=True)
+
+    with get_session() as db:
+        schedule = db.get(NewsletterSchedule, schedule_id)
+        assert schedule is not None
+
+        schedule.weekdays_json = "[0]"
+        schedule.delivery_time = "18:00"
+        schedule.timezone = "Europe/Berlin"
+
+    due_time = datetime(
+        2026,
+        8,
+        17,
+        16,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    with get_session() as db:
+        first = scan_due_schedules_once(db, due_time)
+
+    assert first["due_schedule_count"] >= 1
+
+    with get_session() as db:
+        second = scan_due_schedules_once(db, due_time)
+
+    matching = [
+        item
+        for item in second["results"]
+        if item["schedule_id"] == schedule_id
+    ]
+
+    assert len(matching) == 1
+    assert matching[0]["status"] == "already_processed"
+
+
+def test_due_scan_ignores_not_due_schedule():
+    from datetime import datetime, timezone
+
+    from backend.app.db import get_session
+    from backend.app.schedule_service import scan_due_schedules_once
+    from backend.app.models import NewsletterSchedule
+
+    schedule_id = create_schedule(enabled=True)
+
+    with get_session() as db:
+        schedule = db.get(NewsletterSchedule, schedule_id)
+        assert schedule is not None
+
+        schedule.weekdays_json = "[0]"
+        schedule.delivery_time = "18:00"
+        schedule.timezone = "Europe/Berlin"
+
+    not_due_time = datetime(
+        2026,
+        8,
+        17,
+        16,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    with get_session() as db:
+        result = scan_due_schedules_once(db, not_due_time)
+
+    matching = [
+        item
+        for item in result["results"]
+        if item["schedule_id"] == schedule_id
+    ]
+
+    assert matching == []

@@ -159,3 +159,12 @@ def get_schedule_runs(
         "schedule_id": schedule_id,
         "runs": [serialize_run(run) for run in runs],
     }
+
+
+@router.post("/scan-due")
+def scan_due_schedules(
+    db: Session = Depends(get_db),
+) -> dict:
+    from .schedule_service import scan_due_schedules_once
+
+    return scan_due_schedules_once(db)

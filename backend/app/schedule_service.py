@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -14,6 +14,10 @@ from .crud_newsletters import (
 from .models import Newsletter, NewsletterSchedule, ScheduleRun
 from .news_ingestion import NewsArticle, get_stub_articles
 from .routes_workflows import run_newsletter_workflow
+from .scheduler_logic import (
+    is_schedule_due,
+    schedule_delivery_window_key,
+)
 from .schemas import NewsletterCreate
 
 
@@ -24,7 +28,13 @@ class ScheduleExecutionError(Exception):
     pass
 
 
-def _schedule_values(schedule: NewsletterSchedule) -> tuple[list[str], list[str]]:
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _schedule_values(
+    schedule: NewsletterSchedule,
+) -> tuple[list[str], list[str]]:
     try:
         topics = json.loads(schedule.topics_json)
         sources = json.loads(schedule.sources_json)
@@ -104,27 +114,47 @@ def _serialize_run(run: ScheduleRun) -> dict:
     }
 
 
-def run_schedule_now(
+def _existing_run_for_key(
+    db: Session,
+    run_key: str,
+) -> ScheduleRun | None:
+    return (
+        db.query(ScheduleRun)
+        .filter(ScheduleRun.run_key == run_key)
+        .first()
+    )
+
+
+def _create_run(
     db: Session,
     schedule: NewsletterSchedule,
-) -> dict:
-    if not schedule.enabled:
-        raise ScheduleExecutionError(
-            f"Schedule #{schedule.id} is disabled."
-        )
-
-    run_key = f"manual-{schedule.id}-{uuid4().hex}"
-
+    run_key: str,
+    message: str,
+) -> ScheduleRun:
     run = ScheduleRun(
         schedule_id=schedule.id,
         run_key=run_key,
         status="running",
-        message="Manual schedule execution started.",
+        message=message,
     )
     db.add(run)
     db.flush()
+    return run
 
-    now = datetime.utcnow()
+
+def _run_schedule(
+    db: Session,
+    schedule: NewsletterSchedule,
+    run_key: str,
+    now_utc: datetime,
+    started_message: str,
+) -> dict:
+    run = _create_run(
+        db,
+        schedule,
+        run_key,
+        started_message,
+    )
 
     try:
         topics, sources = _schedule_values(schedule)
@@ -136,8 +166,8 @@ def run_schedule_now(
                 "No unseen local articles are available for this "
                 "schedule's configured sources and topics."
             )
-            run.completed_at = now
-            schedule.last_run_at = now
+            run.completed_at = _utc_now()
+            schedule.last_run_at = now_utc
             db.flush()
 
             return {
@@ -172,20 +202,18 @@ def run_schedule_now(
 
         newsletter.risk_level = classification["risk_level"]
         newsletter.risk_reason = classification["reason"]
-
         run.newsletter_id = newsletter.id
-        schedule.last_run_at = now
+        schedule.last_run_at = now_utc
 
         if newsletter.risk_level in REVIEW_REQUIRED_RISK_LEVELS:
             newsletter.status = "pending_review"
             newsletter.approved = False
-
             run.status = "pending_review"
             run.message = (
                 f"Newsletter #{newsletter.id} requires human review: "
                 f"{newsletter.risk_reason}"
             )
-            run.completed_at = datetime.utcnow()
+            run.completed_at = _utc_now()
             db.flush()
 
             return {
@@ -197,6 +225,7 @@ def run_schedule_now(
                     "title": newsletter.title,
                     "risk_level": newsletter.risk_level,
                     "approved": newsletter.approved,
+                    "status": newsletter.status,
                 },
             }
 
@@ -214,7 +243,7 @@ def run_schedule_now(
             f"Newsletter #{newsletter.id} was sent through "
             "the bounded schedule workflow."
         )
-        run.completed_at = datetime.utcnow()
+        run.completed_at = _utc_now()
         db.flush()
 
         return {
@@ -234,6 +263,91 @@ def run_schedule_now(
     except Exception as exc:
         run.status = "failed"
         run.message = str(exc)
-        run.completed_at = datetime.utcnow()
+        run.completed_at = _utc_now()
         db.flush()
         raise
+
+
+def run_schedule_now(
+    db: Session,
+    schedule: NewsletterSchedule,
+) -> dict:
+    if not schedule.enabled:
+        raise ScheduleExecutionError(
+            f"Schedule #{schedule.id} is disabled."
+        )
+
+    run_key = f"manual-{schedule.id}-{uuid4().hex}"
+
+    return _run_schedule(
+        db=db,
+        schedule=schedule,
+        run_key=run_key,
+        now_utc=_utc_now(),
+        started_message="Manual schedule execution started.",
+    )
+
+
+def scan_due_schedules_once(
+    db: Session,
+    now_utc: datetime | None = None,
+) -> dict:
+    if now_utc is None:
+        now_utc = _utc_now()
+
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    else:
+        now_utc = now_utc.astimezone(timezone.utc)
+
+    schedules = (
+        db.query(NewsletterSchedule)
+        .filter(NewsletterSchedule.enabled.is_(True))
+        .order_by(NewsletterSchedule.id.asc())
+        .all()
+    )
+
+    results: list[dict] = []
+
+    for schedule in schedules:
+        if not is_schedule_due(schedule, now_utc):
+            continue
+
+        run_key = schedule_delivery_window_key(schedule, now_utc)
+        existing_run = _existing_run_for_key(db, run_key)
+
+        if existing_run is not None:
+            results.append(
+                {
+                    "status": "already_processed",
+                    "schedule_id": schedule.id,
+                    "run": _serialize_run(existing_run),
+                }
+            )
+            continue
+
+        try:
+            result = _run_schedule(
+                db=db,
+                schedule=schedule,
+                run_key=run_key,
+                now_utc=now_utc,
+                started_message="Scheduled delivery window started.",
+            )
+        except ScheduleExecutionError as exc:
+            results.append(
+                {
+                    "status": "failed",
+                    "schedule_id": schedule.id,
+                    "message": str(exc),
+                }
+            )
+            continue
+
+        results.append(result)
+
+    return {
+        "scanned_at": now_utc.isoformat(),
+        "due_schedule_count": len(results),
+        "results": results,
+    }

@@ -66,3 +66,23 @@ Implement bounded scheduled delivery:
 - No continuous scheduler worker.
 - No timezone-based due-schedule evaluation.
 - No real RSS/API news ingestion.
+
+## 2026-08-20 — Timezone-aware schedule scanning
+
+### Completed
+
+- Added a versioned database migration for `ScheduleRun.run_key`.
+- Added timezone-aware due-time evaluation for `Europe/Berlin` and `UTC`.
+- Added deterministic local delivery-window keys.
+- Added an idempotent due-schedule scan service.
+- Added `POST /api/schedules/scan-due` for controlled scan testing.
+- Verified that a repeated scan for the same schedule window reports
+  `already_processed` instead of creating another run.
+- Added tests for due-time matching, timezone handling, skipped schedules,
+  and delivery-window idempotency.
+
+### Not included yet
+
+- No continuously running scheduler process yet.
+- No scheduler health/status persistence yet.
+- No real RSS/API ingestion yet.
