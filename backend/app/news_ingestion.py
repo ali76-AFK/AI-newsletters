@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import unescape
@@ -78,12 +79,73 @@ STUB_ARTICLES: tuple[NewsArticle, ...] = (
     ),
 )
 
+SPIEGEL_TECH_RSS = (
+    "https://www.spiegel.de/wissenschaft/technik/index.rss"
+)
+
 RSS_SOURCE_ALLOWLIST = {
     "Spiegel": {
-        "ai_news": (
-            "https://www.spiegel.de/wissenschaft/technik/index.rss"
-        ),
+        "ai_news": SPIEGEL_TECH_RSS,
+        "robotics": SPIEGEL_TECH_RSS,
+        "data_eng": SPIEGEL_TECH_RSS,
+        "devops": SPIEGEL_TECH_RSS,
+        "llm_workflows": SPIEGEL_TECH_RSS,
+        "technology_science": SPIEGEL_TECH_RSS,
     },
+}
+
+TOPIC_KEYWORDS = {
+    "ai_news": (
+        "ai",
+        "ki",
+        "artificial intelligence",
+        "künstliche intelligenz",
+        "machine learning",
+        "maschinelles lernen",
+        "algorithm",
+        "modell",
+        "model",
+        "neural",
+    ),
+    "robotics": (
+        "robot",
+        "robotik",
+        "robotics",
+        "autonomous",
+        "autonom",
+        "drone",
+    ),
+    "data_eng": (
+        "data",
+        "daten",
+        "database",
+        "datenbank",
+        "analytics",
+        "analyse",
+        "data platform",
+        "datenplattform",
+    ),
+    "devops": (
+        "devops",
+        "cloud",
+        "kubernetes",
+        "container",
+        "infrastructure",
+        "infrastruktur",
+        "deployment",
+    ),
+    "llm_workflows": (
+        "llm",
+        "large language model",
+        "language model",
+        "sprachmodell",
+        "rag",
+        "retrieval augmented",
+        "prompt",
+        "agent",
+        "workflow",
+    ),
+    "technology_science": (),
 }
 
 MAX_RSS_ENTRIES = 15
@@ -160,6 +222,45 @@ def _entry_timestamp(entry: object) -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _keyword_matches(
+    text: str,
+    keyword: str,
+) -> bool:
+    pattern = rf"(?<!\w){re.escape(keyword.lower())}(?!\w)"
+    return re.search(pattern, text.lower()) is not None
+
+
+def is_relevant_for_topic(
+    article: NewsArticle,
+    topic: str,
+) -> bool:
+    if topic == "technology_science":
+        return True
+
+    keywords = TOPIC_KEYWORDS.get(topic)
+
+    if keywords is None:
+        return False
+
+    haystack = f"{article.title} {article.body}"
+
+    return any(
+        _keyword_matches(haystack, keyword)
+        for keyword in keywords
+    )
+
+
+def filter_relevant_articles(
+    articles: list[NewsArticle],
+    topic: str,
+) -> list[NewsArticle]:
+    return [
+        article
+        for article in articles
+        if is_relevant_for_topic(article, topic)
+    ]
+
+
 def fetch_rss_articles(
     source: str,
     topic: str,
@@ -195,9 +296,7 @@ def fetch_rss_articles(
     articles: list[NewsArticle] = []
 
     for entry in parsed_feed.entries[:MAX_RSS_ENTRIES]:
-        url = _safe_text(
-            getattr(entry, "link", None)
-        )
+        url = _safe_text(getattr(entry, "link", None))
 
         if not url:
             continue
@@ -207,10 +306,7 @@ def fetch_rss_articles(
         if parsed_url.scheme != "https" or not parsed_url.netloc:
             continue
 
-        title = _safe_text(
-            getattr(entry, "title", None)
-        )
-
+        title = _safe_text(getattr(entry, "title", None))
         summary = _safe_text(
             getattr(entry, "summary", None)
             or getattr(entry, "description", None)
@@ -237,7 +333,7 @@ def fetch_rss_articles(
             )
         )
 
-    return articles
+    return filter_relevant_articles(articles, topic)
 
 
 def get_articles(

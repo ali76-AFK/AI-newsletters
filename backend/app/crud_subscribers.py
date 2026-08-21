@@ -15,6 +15,9 @@ ALLOWED_TOPICS: List[str] = [
     "data_eng",
     "devops",
     "llm_workflows",
+    "technology_science",
+    "business",
+    "world_news",
 ]
 
 

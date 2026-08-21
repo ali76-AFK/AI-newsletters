@@ -66,6 +66,7 @@ def run_status_label(status: str) -> str:
         "sent": "✅ Sent",
         "pending_review": "🟠 Pending review",
         "skipped_no_new_articles": "ℹ️ No new articles",
+        "skipped_no_relevant_articles": "🔎 No relevant articles",
         "already_processed": "↩️ Already processed",
         "failed": "❌ Failed",
         "running": "⏳ Running",
@@ -206,6 +207,7 @@ failed_or_skipped_count = sum(
     in {
         "failed",
         "skipped_no_new_articles",
+        "skipped_no_relevant_articles",
     }
 )
 

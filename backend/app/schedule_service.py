@@ -161,9 +161,9 @@ def _run_schedule(
         article = _first_unseen_article(db, sources, topics)
 
         if article is None:
-            run.status = "skipped_no_new_articles"
+            run.status = "skipped_no_relevant_articles"
             run.message = (
-                "No unseen local articles are available for this "
+                "No unseen relevant articles are available for this "
                 "schedule's configured sources and topics."
             )
             run.completed_at = _utc_now()

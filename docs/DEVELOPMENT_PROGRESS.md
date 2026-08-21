@@ -161,3 +161,24 @@ the existing `ai_news` routing category. Feed entries can include broader
 technology and science coverage; strict article-level topic relevance filtering
 is a future enhancement. The system still processes only one bounded unseen
 article per schedule run.
+
+## 2026-08-21 — Topic-aware RSS relevance filtering
+
+### Completed
+
+- Added technology/science, business, and world-news subscriber topics.
+- Added a source/topic RSS allowlist registry.
+- Added deterministic bounded keyword relevance filtering for technical topics.
+- Added broad `technology_science` routing without keyword restriction.
+- Added `skipped_no_relevant_articles` schedule-run outcomes.
+- Updated dashboard and schedule UI labels for relevance skips.
+- Added tests for new topics, relevance filtering, RSS filtering, and feed allowlisting.
+
+### Current feed coverage
+
+The SPIEGEL science/technology RSS feed currently supports:
+`ai_news`, `robotics`, `data_eng`, `devops`, `llm_workflows`, and
+`technology_science`.
+
+`business` and `world_news` are valid subscriber topics but require dedicated
+allowlisted feeds before RSS-mode scheduled delivery can use them.

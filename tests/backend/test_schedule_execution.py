@@ -73,6 +73,7 @@ def test_enabled_schedule_run_now_records_run():
         "sent",
         "pending_review",
         "skipped_no_new_articles",
+        "skipped_no_relevant_articles",
     }
 
     runs = client.get(
