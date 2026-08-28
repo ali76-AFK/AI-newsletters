@@ -3,6 +3,28 @@
 Local-first, scheduled AI newsletter orchestration with FastAPI, Streamlit,
 PostgreSQL, LangGraph workflows, Mailpit, and selectable AI providers.
 
+
+<p align="center">
+  <img src="./Dashboard.png" alt="AML Alert Triage Copilot GUI before processing" width="900">
+</p>
+
+<p align="center">
+  <img src="./Saved_schedules.png" alt="AML Alert Triage Copilot GUI before processing" width="900">
+</p>
+
+<p align="center">
+  <img src="./AI_workflow.png" alt="AML Alert Triage Copilot GUI before processing" width="900">
+</p>
+
+
+<p align="center">
+  <img src="./Drafts.png" alt="AML Alert Triage Copilot GUI before processing" width="900">
+</p>
+
+<p align="center">
+  <img src="./Delivery_schedule.png" alt="AML Alert Triage Copilot GUI before processing" width="900">
+</p>
+
 ## Current MVP
 
 The project currently supports:
